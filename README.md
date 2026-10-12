@@ -14,7 +14,10 @@ I am **Oleksandr Pohribnyi**, an automation QA engineer with 4+ years of experie
 | 03 | [`03-pcb-test-interface-board`](03-pcb-test-interface-board) | A USB-controlled ESP32-S3 board that powers a device under test (DUT), switches its power, measures its current and exposes its UART / RESET / BOOT lines. Designed in KiCad. | Specification and schematic v0.1 done (ERC clean). PCB layout in progress. Not fabricated yet. |
 
 ## What this portfolio demonstrates
-
+- **Hardware design in KiCad:** requirements, power architecture, schematic capture, ERC, PCB layout and design documentation (specification, design notes, testability plan).
+- **Design for testability:** labelled test points, safe power-up state, current limiting, a bring-up checklist and a failure-diagnosis table.
+- **Embedded test automation (planned):** pytest-based HIL tests, serial protocols, power-cycle and current-measurement checks.
+- **Engineering documentation:** every decision is written down with its reasoning, its alternatives and its status, including the mistakes found and corrected along the way.
 
 ## Tools and skills
 | Area | Tools |
