@@ -1,4 +1,4 @@
-# # Embedded & Hardware Test Portfolio
+# Embedded & Hardware Test Portfolio
 
 Hands-on projects in **hardware-in-the-loop (HIL) testing**, **electronics design** and **test automation for embedded systems**.
  
