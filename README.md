@@ -9,13 +9,14 @@ I am **Oleksandr Pohribnyi**, an automation QA engineer with 4+ years of experie
 ## Projects
 | # | Project | What it is | Status |
 |---|---|---|---|
-| 01 | [`01-hil-test-stand`](01-hil-test-stand) | A pytest-driven HIL test stand that uses the board from project 03 to power-cycle a DUT, read its current and drive its serial console. | Planned |
-| 02 | [`02-uav-sitl-tests`](02-uav-sitl-tests) | Automated tests for drone flight-controller software running in a software-in-the-loop (SITL) simulator. | Planned |
+| 01 | [`01-hil-test-stend`](01-hil-test-stend) | A pytest-driven HIL test stand that uses the board from project 03 to power-cycle a DUT, read its current and drive its serial console. | Planned |
+| 02 | [`02-uav-sitl-tests`](02-uav-sitl-tests) | Automated tests for drone flight-controller software (ArduCopter) running in a software-in-the-loop (SITL) simulator: flight, missions, failsafes, geofence, parameters. | **Done.** 60 tests pass (52 SITL, 8 unit), Allure report, test plan and design notes, CI on GitHub Actions. |
 | 03 | [`03-pcb-test-interface-board`](03-pcb-test-interface-board) | A USB-controlled ESP32-S3 board that powers a device under test (DUT), switches its power, measures its current and exposes its UART / RESET / BOOT lines. Designed in KiCad. | Specification and schematic v0.1 done (ERC clean). PCB layout in progress. Not fabricated yet. |
 
 ## What this portfolio demonstrates
 - **Hardware design in KiCad:** requirements, power architecture, schematic capture, ERC, PCB layout and design documentation (specification, design notes, testability plan).
 - **Design for testability:** labelled test points, safe power-up state, current limiting, a bring-up checklist and a failure-diagnosis table.
+- **Flight-controller test automation:** pytest and pymavlink tests that drive ArduCopter SITL over MAVLink, inject faults (GPS loss, radio-link loss, low battery, geofence breach) and decide pass or fail from telemetry, with a test plan, Allure reports and CI.
 - **Embedded test automation (planned):** pytest-based HIL tests, serial protocols, power-cycle and current-measurement checks.
 - **Engineering documentation:** every decision is written down with its reasoning, its alternatives and its status, including the mistakes found and corrected along the way.
 
@@ -24,7 +25,9 @@ I am **Oleksandr Pohribnyi**, an automation QA engineer with 4+ years of experie
 |---|---|
 | Electronics design | KiCad (schematic, PCB), ERC / DRC, datasheet-driven part selection |
 | Hardware | ESP32-S3, USB-C, LDO and load-switch power paths, INA219 current monitor, I²C, UART |
-| Test automation | Python, pytest (planned), Selenium/Selenide and API testing in my day job |
+| Test automation | Python, pytest, pymavlink, Allure, ruff; Selenium/Selenide and API testing in my day job |
+| Simulation and protocols | ArduPilot SITL, MAVProxy, MAVLink |
+| CI | GitHub Actions, GitHub Pages |
 | Version control and docs | Git, GitHub, Markdown |
 
 ## Repository layout
@@ -32,10 +35,15 @@ I am **Oleksandr Pohribnyi**, an automation QA engineer with 4+ years of experie
 ```
 EmbeddedPortfolio/
 ├── README.md                         this file
-├── 01-hil-test-stand/                planned
-    ├── README.md
-├── 02-uav-sitl-tests/                planned
-    ├── README.md
+├── .github/workflows/                CI for project 02
+├── 01-hil-test-stend/                planned
+│   └── README.md
+├── 02-uav-sitl-tests/
+│   ├── README.md
+│   ├── docs/                         test plan, design notes, setup, reference report
+│   ├── tests/                        pytest tests, one file per area
+│   ├── utils/                        MAVLink helpers
+│   └── sitl/                         expected parameters, fault injection
 └── 03-pcb-test-interface-board/
     ├── README.md
     ├── hardware/kicad/               KiCad project
@@ -51,7 +59,8 @@ EmbeddedPortfolio/
 - [ ] Project 03: PCB layout, DRC clean, Gerber and BOM export
 - [ ] Project 03: prototype and bring-up report with measurements
 - [ ] Project 01: firmware for the board and a pytest HIL test stand
-- [ ] Project 02: SITL test suite
+- [x] Project 02: SITL test suite, test plan, design notes and reference report
+- [ ] Project 02: CI with GitHub Actions and an Allure report on GitHub Pages
 
 
 ## Contact

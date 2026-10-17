@@ -1,0 +1,190 @@
+name: UAV SITL tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '02-uav-sitl-tests/**'
+      - '.github/workflows/sitl-tests.yml'
+  pull_request:
+    paths:
+      - '02-uav-sitl-tests/**'
+      - '.github/workflows/sitl-tests.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: sitl-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: 02-uav-sitl-tests
+
+env:
+  PYTHON_VERSION: '3.14'
+  ALLURE_VERSION: '2.44.0'
+  ARDUPILOT_REF: master          # pin a tag/commit for reproducible runs
+  SITL_HOME: '-35.363261,149.165230,584,353'   # same default location as sim_vehicle.py (CMAC)
+
+jobs:
+  lint-and-unit:
+    name: Lint and unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: 02-uav-sitl-tests/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Unit tests
+        run: pytest -m "not sitl"
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: allure-results-unit
+          path: 02-uav-sitl-tests/reports/allure-results
+          retention-days: 7
+
+  sitl-tests:
+    name: SITL tests
+    needs: lint-and-unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SITL_CONNECTION: tcp:127.0.0.1:5760
+    steps:
+      - uses: actions/checkout@v5
+
+      # ---------- ArduCopter SITL ----------
+      - name: Resolve ArduPilot commit
+        id: ardupilot
+        working-directory: ${{ runner.temp }}
+        run: |
+          sha=$(git ls-remote https://github.com/ArduPilot/ardupilot.git "$ARDUPILOT_REF" | cut -f1 | head -n1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache SITL binary
+        id: sitl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sitl
+          key: arducopter-sitl-${{ steps.ardupilot.outputs.sha }}
+
+      - name: Build ArduCopter SITL
+        if: steps.sitl-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          git clone --recurse-submodules --shallow-submodules --depth 1 \
+            --branch "$ARDUPILOT_REF" https://github.com/ArduPilot/ardupilot.git
+          cd ardupilot
+          sudo apt-get update
+          sudo apt-get install -y g++ python3-venv
+          python3 -m venv .build-venv
+          . .build-venv/bin/activate
+          pip install empy==3.3.4 pexpect future
+          ./waf configure --board sitl
+          ./waf copter
+          mkdir -p "$RUNNER_TEMP/sitl"
+          cp build/sitl/bin/arducopter "$RUNNER_TEMP/sitl/"
+          cp Tools/autotest/default_params/copter.parm "$RUNNER_TEMP/sitl/"
+
+      - name: Start SITL
+        working-directory: ${{ runner.temp }}/sitl
+        run: |
+          nohup ./arducopter --model + --speedup 1 -I0 \
+            --home "$SITL_HOME" --defaults copter.parm \
+            > sitl.log 2>&1 &
+          echo "SITL started, pid $!"
+
+      # ---------- Tests ----------
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: 02-uav-sitl-tests/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Wait for vehicle heartbeat
+        run: |
+          python - <<'EOF'
+          import os
+          from pymavlink import mavutil
+
+          master = mavutil.mavlink_connection(os.environ["SITL_CONNECTION"], autoreconnect=True)
+          if master.wait_heartbeat(timeout=120) is None:
+              raise SystemExit("No heartbeat from SITL")
+          print("Heartbeat received from system", master.target_system)
+          master.close()
+          EOF
+
+      - name: SITL tests
+        run: pytest -m sitl
+
+      - name: Upload SITL log
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: sitl-log
+          path: ${{ runner.temp }}/sitl/sitl.log
+          retention-days: 7
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: allure-results-sitl
+          path: 02-uav-sitl-tests/reports/allure-results
+          retention-days: 7
+
+  report:
+    name: Allure report
+    needs: [lint-and-unit, sitl-tests]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}   # no checkout in this job
+    steps:
+      - name: Download Allure results
+        uses: actions/download-artifact@v5
+        with:
+          pattern: allure-results-*
+          merge-multiple: true
+          path: allure-results
+
+      - name: Install Allure CLI
+        run: |
+          curl -sSL -o allure.tgz \
+            "https://github.com/allure-framework/allure2/releases/download/${ALLURE_VERSION}/allure-${ALLURE_VERSION}.tgz"
+          tar -xzf allure.tgz
+          echo "$PWD/allure-${ALLURE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Generate report
+        run: allure generate allure-results --clean -o allure-report
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: allure-report
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

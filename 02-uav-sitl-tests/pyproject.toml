@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 100          # maximum line length
+target-version = "py314"   # target Python version
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors: PEP 8 style
+    "W",  # pycodestyle warnings: spaces, blank lines
+    "F",  # pyflakes: unused imports/variables, f-strings without variables
+    "I",  # isort: import order
+    "B",  # flake8-bugbear: common Python pitfalls
+]

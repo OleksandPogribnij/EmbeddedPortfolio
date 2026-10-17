@@ -1,145 +1,133 @@
 # UAV SITL Test Suite
- 
-Automated tests for drone flight-controller software, run against a **software-in-the-loop (SITL)** simulator: the real flight-control code runs on a PC, connected to a simulated vehicle, with no hardware and no risk to an aircraft.
- 
-> **Status: planned.** No code has been written yet. This document describes the goal, the scope and the intended approach, so that the project can be built and judged against a clear plan. Items are marked as done only when they exist in this repository
 
-## Why this project
-Flight software is tested best where mistakes are cheap. A simulator lets me check how a flight controller reacts to normal missions and to failures (lost GPS, lost radio link, low battery) hundreds of times, repeatably, and from a script. The same thinking applies to any embedded product: define the expected behaviour, drive the system, observe it, and decide pass or fail automatically.
+[![UAV SITL tests](https://github.com/OleksandPogribnij/EmbeddedPortfolio/actions/workflows/sitl-tests.yml/badge.svg)](https://github.com/OleksandPogribnij/EmbeddedPortfolio/actions/workflows/sitl-tests.yml)
+[![Allure report](https://img.shields.io/badge/report-Allure-orange)](https://oleksandpogribnij.github.io/EmbeddedPortfolio/)
 
+Automated tests for drone flight-controller software. The suite drives
+**ArduCopter** running in the ArduPilot **SITL (software-in-the-loop)**
+simulator over **MAVLink**, injects faults (GPS loss, radio-link loss, low
+battery, geofence breach) and decides pass or fail from telemetry. The real
+flight code runs on a PC, so failures are cheap and every run is repeatable.
 
-## Goals
-- Run a flight-controller SITL simulator from a test, with a clean start and a clean stop for every test.
-- Drive the vehicle over MAVLink from Python: arm, take off, change mode, fly a mission, land.
-- Inject faults: GPS loss, radio-link loss, low battery, geofence breach.
-- Decide pass or fail from telemetry with explicit, documented criteria.
-- Keep the whole suite runnable with one command and, later, in continuous integration.
-- Store logs and results for every run so that a failed test can be investigated.
+**Status: complete.** 60 tests pass (52 SITL, 8 unit) against ArduCopter
+V4.8.0-dev. Reference report: [`docs/results`](docs/results/README.md).
 
-## Planned scope
-| Area | Example checks | Status |
+## What is tested
+
+| Area | Test cases | Examples |
 |---|---|---|
-| Basic flight | Arm, take off to a target altitude, hold position, land and disarm | Planned |
-| Flight modes | Mode changes are accepted or rejected as expected | Planned |
-| Mission execution | A waypoint mission is completed within a position and time tolerance | Planned |
-| Failsafe: GPS loss | The vehicle switches to the expected safe behaviour | Planned |
-| Failsafe: radio-link loss | The vehicle returns or lands according to the configured action | Planned |
-| Failsafe: low battery | The configured battery action is triggered | Planned |
-| Geofence | The vehicle does not leave the fence and reacts as configured | Planned |
-| Parameter checks | Safety-relevant parameters keep their expected values | Planned |
- 
-The exact test list will be written as a test plan before the tests, and each test will state its setup, action, expected result and tolerance.
+| Connection | TC-001..003 | Heartbeat, telemetry streams, initial state |
+| Arming | TC-010..014 | Arm, disarm, arm refused without GPS (with reason), auto-disarm, disarm refused in flight |
+| Take-off and landing | TC-020..024 | Target altitude ± 1 m, altitude hold, landing with auto-disarm, take-off refused while disarmed |
+| Flight modes | TC-030..032 | Mode changes on the ground and in flight, RTL lands within 3 m of home |
+| Missions | TC-040..046 | Square mission in AUTO, progress, interruption by LOITER, upload/download, clear, overwrite, invalid item |
+| Failsafe | TC-050..053 | GPS loss → RTL/LAND, radio loss → RTL home, low battery → RTL then critical → LAND |
+| Geofence | TC-060 | Breach of a 60 m circular fence → RTL, overshoot ≤ 30 m |
+| Parameters | TC-070..072 | Safety configuration the failsafe tests rely on, write/read-back, unknown name |
+| Telemetry | TC-080..084 | GPS fix, battery, hover drift, flight speed |
+| Helpers (unit) | UT-001..008 | Geodesic distance, STATUSTEXT recorder |
 
+Every test case has a setup, steps, expected result and tolerance in the
+[test plan](docs/test-plan.md); the ID in the plan, in the code and in the
+report is the same.
 
-## Planned approach
-- **Simulator:** an open-source flight-controller SITL (ArduPilot SITL is the first candidate; PX4 SITL is the alternative). The final choice and the reasons will be recorded in `docs/design-notes.md` when work starts.
-- **Control and telemetry:** MAVLink from Python (pymavlink).
-- **Test framework:** pytest, with fixtures that start and stop the simulator and open the MAVLink connection.
-- **Pass or fail:** assertions on telemetry (altitude, position, mode, status messages) with explicit time limits, never fixed sleeps alone.
-- **Results:** logs and a short report stored per run.
-- **Automation:** a GitHub Actions workflow once the suite runs reliably locally.
+## How it works
 
-## Planned repository layout
+```
+ Linux: ArduCopter SITL ── MAVProxy ──UDP 14550──▶ Windows: pytest + pymavlink
+                                                         │
+          (CI: SITL on the same runner, TCP 5760) ◀──────┘
+                                                         ▼
+                                                   Allure report
+```
+
+- **Fixtures as vehicle states.** `vehicle_on_ground`, `in_flight`,
+  `clean_mission`, `param_changer` put the vehicle into a known state and
+  restore it after the test, whatever the test did.
+- **Faults over MAVLink.** GPS, RC link and battery faults are injected
+  with SITL `SIM_*` parameters, the same way a ground station would set
+  any parameter. All names and values were confirmed with `param show`
+  and live in [`sitl/params.py`](sitl/params.py).
+- **Every reaction is explained.** A recorder hooked into pymavlink keeps
+  every STATUSTEXT, so a failsafe test checks both *what* the autopilot did
+  (mode, landing, position) and that it *reported* it. A failed test
+  carries the status texts and the vehicle state in the Allure report.
+- **No magic numbers.** Thresholds and timeouts are named constants with
+  units (`utils/constants.py`); helpers raise errors that say what was
+  expected and what was last seen.
+
+The reasoning behind each decision and what was learned about ArduCopter
+along the way (latched battery failsafe, geofence braking distance, why
+`drain()` loses status texts, …) is in the
+[design notes](docs/design-notes.md).
+
+## Quick start
+
+```bash
+# Linux: simulator (see docs/setup.md for the ArduPilot build)
+sim_vehicle.py -v ArduCopter --model + --out 127.0.0.1:14550
+
+# test runner
+cd 02-uav-sitl-tests
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+pytest                         # full suite, about 17.5 min
+pytest -m "not sitl"           # unit tests only, no simulator
+allure serve reports/allure-results
+```
+
+Restart SITL before every full run. Full instructions, including running
+the simulator and the tests on different machines: [docs/setup.md](docs/setup.md).
+
+## Continuous integration
+
+[`.github/workflows/sitl-tests.yml`](../.github/workflows/sitl-tests.yml):
+
+1. **Lint and unit tests**: ruff and the unit tests, no simulator.
+2. **SITL tests**: builds ArduCopter SITL (cached per ArduPilot commit),
+   starts it on the runner and runs the SITL suite against it.
+3. **Allure report**: merges the results and publishes the report to
+   GitHub Pages, also when tests fail.
+
+## Repository layout
+
 ```
 02-uav-sitl-tests/
 ├── README.md
+├── pytest.ini              markers, timeouts, Allure output
+├── pyproject.toml          ruff configuration
+├── requirements.txt        test dependencies
+├── requirements-dev.txt    + ruff
 ├── docs/
-│   ├── test-plan.md          what is tested, setup, expected results, tolerances
-│   └── design-notes.md       why the simulator, tools and structure were chosen
-├── tests/                    pytest tests, grouped by area
-├── sitl/                     helpers that start, stop and configure the simulator
-├── utils/                    MAVLink helpers and telemetry assertions
-└── requirements.txt
+│   ├── test-plan.md        every test case: setup, steps, expected result, tolerance
+│   ├── design-notes.md     decisions and ArduCopter findings
+│   ├── setup.md            simulator and test runner setup
+│   └── results/            reference run with a single-file Allure report
+├── sitl/
+│   └── params.py           expected parameters and fault-injection values
+├── utils/
+│   ├── connection.py       connect, heartbeat, drain
+│   ├── commands.py         arm, disarm, modes, take-off, land, RTL, goto, parameters
+│   ├── telemetry.py        altitude, position, GPS, battery, ground speed
+│   ├── mission.py          mission upload, download, clear, start, progress
+│   ├── status_text.py      STATUSTEXT recorder
+│   ├── geo.py              distance and offset on the Earth's surface
+│   └── constants.py        thresholds, timeouts, flight profile
+└── tests/
+    ├── conftest.py         fixtures, run order, Allure labels and failure attachments
+    └── test_*.py           one file per area
 ```
-These folders will appear as the work is done. Setup and run instructions will be added when the first test passes on a clean machine.
 
-## Roadmap
-- [ ] Decide the simulator and record the decision
-- [ ] Install and run the simulator by hand, document the steps
-- [ ] First test: arm, take off, land
-- [ ] Reusable fixtures for starting and stopping the simulator
-- [ ] Flight mode and mission tests
-- [ ] Failsafe tests (GPS, radio link, battery) and geofence
-- [ ] Test plan document and result reports
-- [ ] Continuous integration workflow
+## Tools
 
+Python 3.14 · pytest · pymavlink · ArduPilot SITL · MAVProxy · Allure ·
+ruff · GitHub Actions
 
+## Limitations
 
-Readme 02 · MD
-# UAV SITL Test Suite
- 
-Automated tests for drone flight-controller software, run against a **software-in-the-loop (SITL)** simulator: the real flight-control code runs on a PC, connected to a simulated vehicle, with no hardware and no risk to an aircraft.
- 
-> **Status: planned.** No code has been written yet. This document describes the goal, the scope and the intended approach, so that the project can be built and judged against a clear plan. Items are marked as done only when they exist in this repository.
- 
-## Why this project
- 
-Flight software is tested best where mistakes are cheap. A simulator lets me check how a flight controller reacts to normal missions and to failures (lost GPS, lost radio link, low battery) hundreds of times, repeatably, and from a script. The same thinking applies to any embedded product: define the expected behaviour, drive the system, observe it, and decide pass or fail automatically.
- 
-This project is the software-side companion of the hardware work in this portfolio:
- 
-- [`03-pcb-test-interface-board`](../03-pcb-test-interface-board): a board that powers and observes a real device under test.
-- [`01-hil-test-stand`](../01-hil-test-stand): the pytest framework that will drive that board.
-- **This project:** the same style of test automation, applied to flight-controller behaviour in simulation.
-## Goals
- 
-- Run a flight-controller SITL simulator from a test, with a clean start and a clean stop for every test.
-- Drive the vehicle over MAVLink from Python: arm, take off, change mode, fly a mission, land.
-- Inject faults: GPS loss, radio-link loss, low battery, geofence breach.
-- Decide pass or fail from telemetry with explicit, documented criteria.
-- Keep the whole suite runnable with one command and, later, in continuous integration.
-- Store logs and results for every run so that a failed test can be investigated.
-## Planned scope
- 
-| Area | Example checks | Status |
-|---|---|---|
-| Basic flight | Arm, take off to a target altitude, hold position, land and disarm | Planned |
-| Flight modes | Mode changes are accepted or rejected as expected | Planned |
-| Mission execution | A waypoint mission is completed within a position and time tolerance | Planned |
-| Failsafe: GPS loss | The vehicle switches to the expected safe behaviour | Planned |
-| Failsafe: radio-link loss | The vehicle returns or lands according to the configured action | Planned |
-| Failsafe: low battery | The configured battery action is triggered | Planned |
-| Geofence | The vehicle does not leave the fence and reacts as configured | Planned |
-| Parameter checks | Safety-relevant parameters keep their expected values | Planned |
- 
-The exact test list will be written as a test plan before the tests, and each test will state its setup, action, expected result and tolerance.
- 
-## Planned approach
- 
-- **Simulator:** an open-source flight-controller SITL (ArduPilot SITL is the first candidate; PX4 SITL is the alternative). The final choice and the reasons will be recorded in `docs/design-notes.md` when work starts.
-- **Control and telemetry:** MAVLink from Python (pymavlink).
-- **Test framework:** pytest, with fixtures that start and stop the simulator and open the MAVLink connection.
-- **Pass or fail:** assertions on telemetry (altitude, position, mode, status messages) with explicit time limits, never fixed sleeps alone.
-- **Results:** logs and a short report stored per run.
-- **Automation:** a GitHub Actions workflow once the suite runs reliably locally.
-## Planned repository layout
- 
-```
-02-uav-sitl-tests/
-├── README.md
-├── docs/
-│   ├── test-plan.md          what is tested, setup, expected results, tolerances
-│   └── design-notes.md       why the simulator, tools and structure were chosen
-├── tests/                    pytest tests, grouped by area
-├── sitl/                     helpers that start, stop and configure the simulator
-├── utils/                    MAVLink helpers and telemetry assertions
-└── requirements.txt
-```
- 
-These folders will appear as the work is done. Setup and run instructions will be added when the first test passes on a clean machine.
- 
-## Roadmap
- 
-- [ ] Decide the simulator and record the decision
-- [ ] Install and run the simulator by hand, document the steps
-- [ ] First test: arm, take off, land
-- [ ] Reusable fixtures for starting and stopping the simulator
-- [ ] Flight mode and mission tests
-- [ ] Failsafe tests (GPS, radio link, battery) and geofence
-- [ ] Test plan document and result reports
-- [ ] Continuous integration workflow
-
-## Limitations 
-- A simulator is not a real aircraft. Results show how the software behaves in the simulated model, not how a real vehicle flies.
-- The simulated sensors and physics are simplified, so timing and tolerances measured here are not flight-qualified values.
-- This is a learning and demonstration project. It is not a certified test procedure.
+- Simulated physics are simplified: the tolerances are criteria for the
+  simulator, not flight-qualified values.
+- The battery failsafe stays latched until SITL restarts, so the battery
+  test runs last and a full run needs a fresh simulator.
+- The STATUSTEXT checks match keywords, not the exact wording of the
+  autopilot messages.
