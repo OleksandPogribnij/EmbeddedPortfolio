@@ -121,10 +121,21 @@ jobs:
         run: |
           python - <<'EOF'
           import os
+          import time
+
           from pymavlink import mavutil
 
-          master = mavutil.mavlink_connection(os.environ["SITL_CONNECTION"], autoreconnect=True)
-          if master.wait_heartbeat(timeout=120) is None:
+          endpoint = os.environ["SITL_CONNECTION"]
+          deadline = time.monotonic() + 120
+          while True:
+              try:
+                  master = mavutil.mavlink_connection(endpoint)
+                  break
+              except OSError as error:
+                  if time.monotonic() > deadline:
+                      raise SystemExit(f"SITL is not listening on {endpoint}: {error}")
+                  time.sleep(2)
+          if master.wait_heartbeat(timeout=60) is None:
               raise SystemExit("No heartbeat from SITL")
           print("Heartbeat received from system", master.target_system)
           master.close()
@@ -132,6 +143,13 @@ jobs:
 
       - name: SITL tests
         run: pytest -m sitl
+
+      - name: Show SITL log
+        if: failure()
+        working-directory: ${{ runner.temp }}/sitl
+        run: |
+          pgrep -a arducopter || echo "arducopter is not running"
+          tail -n 100 sitl.log
 
       - name: Upload SITL log
         if: failure()
